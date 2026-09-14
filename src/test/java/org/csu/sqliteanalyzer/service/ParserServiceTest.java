@@ -1,12 +1,15 @@
 package org.csu.sqliteanalyzer.service;
 
-import org.csu.sqliteanalyzer.ast.*;
-import org.csu.sqliteanalyzer.ast.create.CreateTableStatement;
-import org.csu.sqliteanalyzer.ast.select.AggregateFunction;
-import org.csu.sqliteanalyzer.ast.select.SelectStatement;
-import org.csu.sqliteanalyzer.exception.SyntaxException;
-import org.csu.sqliteanalyzer.services.LexerService;
-import org.csu.sqliteanalyzer.services.ParserService;
+import org.csu.sqliteanalyzer.analyzer.ast.ASTNode;
+import org.csu.sqliteanalyzer.analyzer.ast.DeleteStatement;
+import org.csu.sqliteanalyzer.analyzer.ast.InsertStatement;
+import org.csu.sqliteanalyzer.analyzer.ast.UpdateStatement;
+import org.csu.sqliteanalyzer.analyzer.ast.create.CreateTableStatement;
+import org.csu.sqliteanalyzer.analyzer.ast.select.AggregateFunction;
+import org.csu.sqliteanalyzer.analyzer.ast.select.SelectStatement;
+import org.csu.sqliteanalyzer.analyzer.exception.SyntaxException;
+import org.csu.sqliteanalyzer.analyzer.services.LexerService;
+import org.csu.sqliteanalyzer.analyzer.services.ParserService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

@@ -1,16 +1,17 @@
 package org.csu.sqliteanalyzer.service;
 
-import org.csu.sqliteanalyzer.ast.ASTNode;
-import org.csu.sqliteanalyzer.logical_plan.*;
-import org.csu.sqliteanalyzer.logical_plan.filter.*;
-import org.csu.sqliteanalyzer.logical_plan.select.AggregateFunctionNode;
-import org.csu.sqliteanalyzer.logical_plan.select.GroupByNode;
-import org.csu.sqliteanalyzer.logical_plan.select.ProjectNode;
-import org.csu.sqliteanalyzer.logical_plan.select.SortNode;
-import org.csu.sqliteanalyzer.services.LogicalPlanService;
-import org.csu.sqliteanalyzer.services.TreeTextService;
-import org.csu.sqliteanalyzer.services.LexerService;
-import org.csu.sqliteanalyzer.services.ParserService;
+import org.csu.sqliteanalyzer.analyzer.ast.ASTNode;
+import org.csu.sqliteanalyzer.analyzer.exception.PlanException;
+import org.csu.sqliteanalyzer.analyzer.logical_plan.*;
+import org.csu.sqliteanalyzer.analyzer.logical_plan.filter.*;
+import org.csu.sqliteanalyzer.analyzer.logical_plan.select.AggregateFunctionNode;
+import org.csu.sqliteanalyzer.analyzer.logical_plan.select.GroupByNode;
+import org.csu.sqliteanalyzer.analyzer.logical_plan.select.ProjectNode;
+import org.csu.sqliteanalyzer.analyzer.logical_plan.select.SortNode;
+import org.csu.sqliteanalyzer.analyzer.services.LogicalPlanService;
+import org.csu.sqliteanalyzer.analyzer.services.TreeTextService;
+import org.csu.sqliteanalyzer.analyzer.services.LexerService;
+import org.csu.sqliteanalyzer.analyzer.services.ParserService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -181,9 +182,9 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testRejectsUnclosedParenthesizedWhereExpression() throws Exception {
-        org.csu.sqliteanalyzer.exception.PlanException exception =
+        PlanException exception =
                 org.junit.jupiter.api.Assertions.assertThrows(
-                        org.csu.sqliteanalyzer.exception.PlanException.class,
+                        PlanException.class,
                         () -> generate("SELECT id FROM user WHERE (id > 10 OR age < 18 AND grade >= 90;")
                 );
 

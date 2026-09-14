@@ -1,7 +1,7 @@
 package org.csu.sqliteanalyzer.service;
 
-import org.csu.sqliteanalyzer.exception.LexerException;
-import org.csu.sqliteanalyzer.services.LexerService;
+import org.csu.sqliteanalyzer.analyzer.exception.LexerException;
+import org.csu.sqliteanalyzer.analyzer.services.LexerService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
