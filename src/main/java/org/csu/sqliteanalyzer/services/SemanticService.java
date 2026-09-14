@@ -1,6 +1,8 @@
 package org.csu.sqliteanalyzer.services;
 
 import org.csu.sqliteanalyzer.ast.*;
+import org.csu.sqliteanalyzer.ast.select.AggregateFunction;
+import org.csu.sqliteanalyzer.ast.select.SelectStatement;
 import org.csu.sqliteanalyzer.common.Assignment;
 import org.csu.sqliteanalyzer.common.SelectItem;
 import org.csu.sqliteanalyzer.exception.SemanticException;
@@ -95,12 +97,19 @@ public class SemanticService {
             } else if (item instanceof SelectItem) {
                 checkColumn(statement.getTableName(),
                         ((SelectItem) item).getColumnName(), columns);
+            } else if (item instanceof AggregateFunction aggregateFunction) {
+                if (!"*".equals(aggregateFunction.getIdentifier())) {
+                    checkColumn(statement.getTableName(),
+                            aggregateFunction.getIdentifier(), columns);
+                }
             } else {
                 throw new SemanticException("Unsupported SELECT list item");
             }
         }
 
         checkWhereClause(statement.getTableName(), statement.getWhereClause().orElse(null), columns);
+        checkGroupByClause(statement.getTableName(),
+                statement.getGroupByClause().orElse(null), columns);
     }
 
     private void analyzeInsert(InsertStatement statement) throws SemanticException {
@@ -172,7 +181,6 @@ public class SemanticService {
         }
 
         if (tables.isEmpty()) {
-            System.out.println("error");
             return null;
         }
 
@@ -221,6 +229,17 @@ public class SemanticService {
                     || columns.contains(normalize(value))) {
                 checkColumn(tableName, value, columns);
             }
+        }
+    }
+
+    private void checkGroupByClause(String tableName, String groupByClause, Set<String> columns)
+            throws SemanticException {
+        if (groupByClause == null || groupByClause.isBlank() || columns == null) {
+            return;
+        }
+
+        for (String groupColumn : groupByClause.split(",")) {
+            checkColumn(tableName, groupColumn.trim(), columns);
         }
     }
 
