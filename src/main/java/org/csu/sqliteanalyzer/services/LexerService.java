@@ -1,5 +1,7 @@
 package org.csu.sqliteanalyzer.services;
 
+import org.csu.sqliteanalyzer.exception.LexerException;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -8,20 +10,29 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-
 public class LexerService {
 
-    private static final Set<String> KEYWORDS = Set.of(
-        "CREATE","TABLE","INSERT","INTO","SELECT","FROM","WHERE","DELETE","VALUES",
-            "UPDATE","SET"
+    private static final Set<String> OPERATION_KEYWORDS = Set.of(
+            "CREATE", "TABLE", "INSERT", "INTO", "SELECT", "FROM", "WHERE", "DELETE", "VALUES",
+            "UPDATE", "SET",
+            "AND", "OR", "NOT",
+            "ORDER", "BY", "ASC", "DESC", "GROUP",
+            "COUNT", "SUM", "AVG", "MAX", "MIN",
+            "PRIMARY", "KEY", "AUTOINCREMENT", "NULL", "DEFAULT"
     );
-    private static final Set<String> OPERATIONS = Set.of(
-        "=","!=","<","<=",">",">=","+","-","*","/"
+    private static final Set<String> DATA_TYPES = Set.of(
+            "INT", "INTEGER", "TINYINT", "SMALLINT", "MEDIUMINT", "BIGINT",
+            "INT2", "INT8",
+            "CHAR", "CHARACTER", "VARCHAR", "VARYING", "NCHAR", "NVARCHAR",
+            "TEXT", "CLOB",
+            "BLOB",
+            "REAL", "DOUBLE", "FLOAT",
+            "NUMERIC", "DECIMAL", "BOOLEAN",
+            "DATE", "DATETIME"
     );
-    private static final Set<String> DELIMITERS = Set.of(
-            "(",")",";",","
+    private static final Set<String> MULTI_CHARACTER_OPERATORS = Set.of(
+            "==", "!=", "<=", ">="
     );
-
 
     public List<Map<String, Object>> tokenize(String source) {
         Objects.requireNonNull(source, "source must not be null");
@@ -49,7 +60,8 @@ public class LexerService {
 
             if (current == '/' && position + 1 < source.length()
                     && source.charAt(position + 1) == '*') {
-                int nextPosition = skipBlockComment(source, position + 2);
+                int nextPosition = skipBlockComment(
+                        source, position + 2, location.line, location.column);
                 location.advance(source, position, nextPosition);
                 position = nextPosition;
                 continue;
@@ -62,28 +74,36 @@ public class LexerService {
             if (isIdentifierStart(current)) {
                 position = readIdentifier(source, position);
                 String value = source.substring(start, position);
-                String type = KEYWORDS.contains(value.toUpperCase(Locale.ROOT))
-                        ? "keyword"
-                        : "identifier";
+                String upperCaseValue = value.toUpperCase(Locale.ROOT);
+                String type;
+                if (OPERATION_KEYWORDS.contains(upperCaseValue)) {
+                    type = "keyword";
+                } else if (DATA_TYPES.contains(upperCaseValue)) {
+                    type = "datatype";
+                } else {
+                    type = "identifier";
+                }
                 location.advance(source, start, position);
-                tokens.add(token(type, value, line, startColumn));
+                tokens.add(token(type,
+                        ("keyword".equals(type) || "datatype".equals(type))
+                                ? upperCaseValue
+                                : value,
+                        line,
+                        startColumn));
                 continue;
             }
 
-//            if (current == '\'' || current == '"' || current == '`' || current == '[') {
-//                char closing = current == '[' ? ']' : current;
-//                position = readQuoted(source, position, closing);
-//                String type = current == '\'' ? "string" : "identifier";
-//                location.advance(source, start, position);
-//                tokens.add(token(type, source.substring(start, position),
-//                        line, startColumn));
-//                continue;
-//            }
+            if (current == '\'' || current == '"' || current == '`') {
+                position = readQuoted(source, position, current, line, startColumn);
+                String type = current == '\'' ? "string" : "identifier";
+                location.advance(source, start, position);
+                tokens.add(token(type, source.substring(start, position),
+                        line, startColumn));
+                continue;
+            }
 
-            if (Character.isDigit(current)
-                    || (current == '.' && position + 1 < source.length()
-                    && Character.isDigit(source.charAt(position + 1)))) {
-                position = readNumber(source, position);
+            if (isNumberStart(source, position)) {
+                position = readNumber(source, position, line, startColumn);
                 location.advance(source, start, position);
                 tokens.add(token("number", source.substring(start, position),
                         line, startColumn));
@@ -106,10 +126,11 @@ public class LexerService {
                 continue;
             }
 
-            position++;
-            location.advance(current);
-            tokens.add(token("unknown", String.valueOf(current),
-                    line, startColumn));
+            throw new LexerException(
+                    String.format("Unexpected character '%s'", current),
+                    line,
+                    startColumn
+            );
         }
 
         return tokens;
@@ -167,7 +188,13 @@ public class LexerService {
         return position;
     }
 
-    private static int readQuoted(String source, int position, char closing) {
+    private static int readQuoted(
+            String source,
+            int position,
+            char closing,
+            int line,
+            int column
+    ) {
         position++;
         while (position < source.length()) {
             if (source.charAt(position) == closing) {
@@ -179,50 +206,114 @@ public class LexerService {
             }
             position++;
         }
-        return position;
+
+        throw new LexerException(
+                String.format("Unterminated %s-quoted literal", quoteName(closing)),
+                line,
+                column
+        );
     }
 
-    private static int readNumber(String source, int position) {
-        while (position < source.length() && Character.isDigit(source.charAt(position))) {
-            position++;
+    private static int readNumber(String source, int position, int line, int column) {
+        int start = position;
+
+        if (source.charAt(position) == '0'
+                && position + 1 < source.length()
+                && (source.charAt(position + 1) == 'x'
+                || source.charAt(position + 1) == 'X')) {
+            position += 2;
+            int digitsStart = position;
+            while (position < source.length() && isHexDigit(source.charAt(position))) {
+                position++;
+            }
+            if (position == digitsStart) {
+                throw invalidNumber(source, start, position, line, column);
+            }
+            ensureNumberBoundary(source, start, position, line, column);
+            return position;
         }
 
-        if (position < source.length() && source.charAt(position) == '.') {
+        if (source.charAt(position) == '.') {
             position++;
-            while (position < source.length() && Character.isDigit(source.charAt(position))) {
+            while (position < source.length() && isAsciiDigit(source.charAt(position))) {
                 position++;
+            }
+        } else {
+            while (position < source.length() && isAsciiDigit(source.charAt(position))) {
+                position++;
+            }
+
+            if (position < source.length() && source.charAt(position) == '.') {
+                position++;
+                while (position < source.length() && isAsciiDigit(source.charAt(position))) {
+                    position++;
+                }
             }
         }
 
         if (position < source.length()
                 && (source.charAt(position) == 'e' || source.charAt(position) == 'E')) {
-            int exponentStart = position++;
+            position++;
             if (position < source.length()
                     && (source.charAt(position) == '+' || source.charAt(position) == '-')) {
                 position++;
             }
             int exponentDigitsStart = position;
-            while (position < source.length() && Character.isDigit(source.charAt(position))) {
+            while (position < source.length() && isAsciiDigit(source.charAt(position))) {
                 position++;
             }
             if (position == exponentDigitsStart) {
-                position = exponentStart;
+                throw invalidNumber(source, start, position, line, column);
             }
         }
 
+        ensureNumberBoundary(source, start, position, line, column);
         return position;
+    }
+
+    private static void ensureNumberBoundary(
+            String source,
+            int start,
+            int position,
+            int line,
+            int column
+    ) {
+        if (position < source.length()
+                && (isIdentifierPart(source.charAt(position)) || source.charAt(position) == '.')) {
+            int end = position + 1;
+            while (end < source.length()
+                    && (isIdentifierPart(source.charAt(end)) || source.charAt(end) == '.')) {
+                end++;
+            }
+            throw invalidNumber(source, start, end, line, column);
+        }
+    }
+
+    private static LexerException invalidNumber(
+            String source,
+            int start,
+            int end,
+            int line,
+            int column
+    ) {
+        int safeEnd = Math.min(Math.max(end, start + 1), source.length());
+        return new LexerException(
+                String.format("Invalid numeric literal '%s'", source.substring(start, safeEnd)),
+                line,
+                column
+        );
     }
 
     private static String readOperator(String source, int position) {
         if (position + 1 < source.length()) {
             String twoCharacters = source.substring(position, position + 2);
-            if (Set.of("==", "!=", "<>", "<=", ">=", "||", "<<", ">>", "->").contains(twoCharacters)) {
+            if (MULTI_CHARACTER_OPERATORS.contains(twoCharacters)) {
                 return twoCharacters;
             }
         }
 
         return switch (source.charAt(position)) {
-            case '=', '!', '<', '>', '+', '-', '*', '/', '%', '|', '&', '~' ->
+            case '=', '!', '<', '>', '+', '-', '*', '/'->
                     String.valueOf(source.charAt(position));
             default -> null;
         };
@@ -237,14 +328,41 @@ public class LexerService {
         return position;
     }
 
-    private static int skipBlockComment(String source, int position) {
+    private static int skipBlockComment(String source, int position, int line, int column) {
         while (position + 1 < source.length()) {
             if (source.charAt(position) == '*' && source.charAt(position + 1) == '/') {
                 return position + 2;
             }
             position++;
         }
-        return source.length();
+        throw new LexerException("Unterminated block comment", line, column);
+    }
+
+    private static String quoteName(char quote) {
+        return switch (quote) {
+            case '\'' -> "single";
+            case '"' -> "double";
+            case '`' -> "backtick";
+            default -> "quoted";
+        };
+    }
+
+    private static boolean isNumberStart(String source, int position) {
+        char current = source.charAt(position);
+        return isAsciiDigit(current)
+                || (current == '.'
+                && position + 1 < source.length()
+                && isAsciiDigit(source.charAt(position + 1)));
+    }
+
+    private static boolean isAsciiDigit(char character) {
+        return character >= '0' && character <= '9';
+    }
+
+    private static boolean isHexDigit(char character) {
+        return isAsciiDigit(character)
+                || (character >= 'a' && character <= 'f')
+                || (character >= 'A' && character <= 'F');
     }
 
     private static boolean isIdentifierStart(char character) {
@@ -259,7 +377,7 @@ public class LexerService {
 
     private static boolean isPunctuation(char character) {
         return switch (character) {
-            case '(', ')', ',', ';', '.', ':' -> true;
+            case '(', ')', ',', ';' -> true;
             default -> false;
         };
     }

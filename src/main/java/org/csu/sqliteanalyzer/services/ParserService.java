@@ -1,13 +1,25 @@
 package org.csu.sqliteanalyzer.services;
 
 import org.csu.sqliteanalyzer.ast.*;
+import org.csu.sqliteanalyzer.ast.create.*;
+import org.csu.sqliteanalyzer.ast.select.AggregateFunction;
+import org.csu.sqliteanalyzer.ast.select.SelectStatement;
 import org.csu.sqliteanalyzer.common.Assignment;
-import org.csu.sqliteanalyzer.common.SelectItem;
 import org.csu.sqliteanalyzer.exception.SyntaxException;
 
 import java.util.*;
 
 public class ParserService {
+    private static final Set<String> COLUMN_CONSTRAINTS = Set.of(
+            "PRIMARY KEY",
+            "AUTOINCREMENT",
+            "NOT NULL",
+            "DEFAULT"
+    );
+    private static final Set<String> AGGREGATE_FUNCTIONS = Set.of(
+            "COUNT", "SUM", "AVG", "MAX", "MIN"
+    );
+
     private List<Map<String,Object>> tokens;
     private int pos;
     private Map<String,Object> currentToken;
@@ -23,7 +35,9 @@ public class ParserService {
             throw new SyntaxException("Empty SQL statement");
         }
 
-        switch ((String) currentToken.get("value")) {
+        switch (currentValue().toUpperCase(Locale.ROOT)) {
+            case "CREATE":
+                return parseCreate();
             case "SELECT":
                 return parseSelect();
             case "INSERT":
@@ -34,7 +48,7 @@ public class ParserService {
                 return parseDelete();
             default:
                 throw new SyntaxException(
-                        String.format("Unexpected token '%s', expected SELECT, INSERT, UPDATE, or DELETE",
+                        String.format("Unexpected token '%s', expected CREATE, SELECT, INSERT, UPDATE, or DELETE",
                                 currentToken.get("value")),
                         (int)currentToken.get("line"),
                         (int)currentToken.get("startColumn")
@@ -46,14 +60,17 @@ public class ParserService {
         pos++;
         if (pos < tokens.size()) {
             currentToken = tokens.get(pos);
+        } else {
+            currentToken = null;
         }
     }
     private Map<String,Object> expect(String keyword) throws SyntaxException {
-        if (!currentToken.get("value").equals(keyword)) {
+        if (currentToken == null || !String.valueOf(currentToken.get("value")).equalsIgnoreCase(keyword)) {
             throw new SyntaxException(
-                    String.format("Expected %s, got %s", keyword, currentToken.get("value")),
-                    (int)currentToken.get("line"),
-                    (int)currentToken.get("startColumn")
+                    String.format("Expected %s, got %s", keyword,
+                            currentToken == null ? "end of statement" : currentToken.get("value")),
+                    tokenLine(currentToken),
+                    tokenColumn(currentToken)
             );
         }
         Map<String,Object> token = currentToken;
@@ -66,15 +83,237 @@ public class ParserService {
         expect("FROM");
         String tableName = parseTableName();
         String whereClause = null;
-        if (currentToken.get("value").equals("WHERE")) {
+        if (isCurrentKeyword("WHERE")) {
             whereClause = parseWhereClause();
         }
-        return new SelectStatement(selectList, tableName, whereClause);
+        String groupByClause = null;
+        if (isCurrentKeyword("GROUP")) {
+            groupByClause = parseGroupByClause();
+        }
+        String orderByClause = null;
+        if (isCurrentKeyword("ORDER")) {
+            orderByClause = parseOrderByClause();
+        }
+        return new SelectStatement(
+                selectList, tableName, whereClause, groupByClause, orderByClause);
     }
+
+    public CreateTableStatement parseCreate() throws SyntaxException {
+        expect("CREATE");
+        expect("TABLE");
+        if (isCurrentKeyword("IF")) {
+            advance();
+            expect("NOT");
+            expect("EXISTS");
+        }
+        String tableName = parseTableName();
+        expect("(");
+
+        List<ColumnDefinition> columns = new ArrayList<>();
+        while (!isCurrentValue(")")) {
+            columns.add(parseColumnDefinition());
+
+            if (isCurrentValue(",")) {
+                advance();
+                if (isCurrentValue(")")) {
+                    throw new SyntaxException("Expected column definition after comma");
+                }
+            } else if (!isCurrentValue(")")) {
+                throw new SyntaxException("Expected ',' or ')' after column definition");
+            }
+        }
+
+        expect(")");
+        return new CreateTableStatement(tableName, columns);
+    }
+
+    private ColumnDefinition parseColumnDefinition() throws SyntaxException {
+        if (currentToken == null || !"identifier".equals(currentToken.get("type"))) {
+            throw new SyntaxException("Expected column name");
+        }
+
+        String columnName = (String) currentToken.get("value");
+        advance();
+
+        DataType dataType = parseDataType(columnName);
+
+        List<ColumnConstraint> constraints = new ArrayList<>();
+        while (currentToken != null
+                && !isCurrentValue(",")
+                && !isCurrentValue(")")) {
+            constraints.add(parseColumnConstraint());
+        }
+
+        return new ColumnDefinition(columnName, dataType, constraints);
+    }
+
+    private DataType parseDataType(String columnName) throws SyntaxException {
+        if (currentToken == null || !"datatype".equals(currentToken.get("type"))) {
+            throw new SyntaxException("Expected data type for column '" + columnName + "'");
+        }
+
+        String name = (String) currentToken.get("value");
+        advance();
+
+        List<Integer> parameters = List.of();
+        if (isCurrentValue("(")) {
+            parameters = parseTypeParameters();
+        }
+
+        return new DataType(name, parameters);
+    }
+
+    private ColumnConstraint parseColumnConstraint() throws SyntaxException {
+        String keyword = currentKeyword();
+        String constraint = switch (keyword) {
+            case "PRIMARY" -> "PRIMARY KEY";
+            case "AUTOINCREMENT" -> "AUTOINCREMENT";
+            case "NOT" -> "NOT NULL";
+            case "DEFAULT" -> "DEFAULT";
+            default -> null;
+        };
+
+        if (constraint == null || !COLUMN_CONSTRAINTS.contains(constraint)) {
+            throw new SyntaxException(
+                    "Unsupported column constraint '" + currentValue() + "'"
+            );
+        }
+
+        switch (constraint) {
+            case "PRIMARY KEY":
+                advance();
+                consumeConstraintKeyword("KEY");
+                return new PrimaryKeyConstraint();
+            case "AUTOINCREMENT":
+                advance();
+                return new AutoIncrementConstraint();
+            case "NOT NULL":
+                advance();
+                consumeConstraintKeyword("NULL");
+                return new NotNullConstraint();
+            case "DEFAULT":
+                advance();
+                return new DefaultConstraint(parseDefaultValue());
+            default:
+                throw new SyntaxException("Unsupported column constraint '" + keyword + "'");
+        }
+    }
+
+    private String parseDefaultValue() throws SyntaxException {
+        if (currentToken == null
+                || isCurrentValue(",")
+                || isCurrentValue(")")) {
+            throw new SyntaxException("Expected value after DEFAULT");
+        }
+
+        StringBuilder value = new StringBuilder();
+        if (isCurrentValue("+") || isCurrentValue("-")) {
+            value.append(currentToken.get("value"));
+            advance();
+        }
+
+        if (!isLiteralToken(currentToken)) {
+            throw new SyntaxException("Expected literal value after DEFAULT");
+        }
+
+        value.append(currentToken.get("value"));
+        advance();
+        return value.toString();
+    }
+
+    private void consumeConstraintKeyword(String expected) throws SyntaxException {
+        if (currentToken == null
+                || !expected.equalsIgnoreCase(String.valueOf(currentToken.get("value")))) {
+            String actual = currentToken == null ? "end of statement" : String.valueOf(currentToken.get("value"));
+            throw new SyntaxException("Expected " + expected + " in column constraint, got " + actual);
+        }
+        advance();
+    }
+
+    private String currentKeyword() {
+        return currentToken == null
+                ? ""
+                : String.valueOf(currentToken.get("value")).toUpperCase(Locale.ROOT);
+    }
+
+    private List<Integer> parseTypeParameters() throws SyntaxException {
+        expect("(");
+        List<Integer> parameters = new ArrayList<>();
+        boolean expectingNumber = true;
+
+        while (currentToken != null && !isCurrentValue(")")) {
+            if (expectingNumber) {
+                if (!"number".equals(currentToken.get("type"))) {
+                    throw new SyntaxException("Expected numeric type parameter");
+                }
+                String parameter = String.valueOf(currentToken.get("value"));
+                try {
+                    parameters.add(Integer.parseInt(parameter));
+                } catch (NumberFormatException e) {
+                    throw new SyntaxException("Expected integer type parameter, got " + parameter);
+                }
+                advance();
+                expectingNumber = false;
+            } else {
+                if (!isCurrentValue(",")) {
+                    throw new SyntaxException("Expected ',' or ')' in type parameters");
+                }
+                advance();
+                expectingNumber = true;
+            }
+        }
+
+        if (currentToken == null || expectingNumber) {
+            throw new SyntaxException("Unclosed or empty type parameters");
+        }
+
+        expect(")");
+        return parameters;
+    }
+
+    private boolean isCurrentValue(String value) {
+        return currentToken != null && value.equals(currentValue());
+    }
+
+    private boolean isCurrentKeyword(String keyword) {
+        return currentToken != null
+                && String.valueOf(currentToken.get("value")).equalsIgnoreCase(keyword);
+    }
+
+    private int tokenLine(Map<String, Object> token) {
+        return token == null ? 0 : (int) token.get("line");
+    }
+
+    private int tokenColumn(Map<String, Object> token) {
+        return token == null ? 0 : (int) token.get("startColumn");
+    }
+
+    private String currentValue() {
+        return currentToken == null ? "" : String.valueOf(currentToken.get("value"));
+    }
+
+    private String currentType() {
+        return currentToken == null ? "" : String.valueOf(currentToken.get("type"));
+    }
+
+    private boolean isLiteralToken(Map<String, Object> token) {
+        if (token == null) {
+            return false;
+        }
+
+        String type = String.valueOf(token.get("type"));
+        if (Set.of("number", "string", "identifier").contains(type)) {
+            return true;
+        }
+
+        return "keyword".equals(type)
+                && "NULL".equalsIgnoreCase(String.valueOf(token.get("value")));
+    }
+
     private List<Object> parseSelectList() throws SyntaxException {
         List<Object> items = new ArrayList<>();
 
-        if (currentToken.get("value") == "*") {
+        if (isCurrentValue("*")) {
             advance();
             items.add("*");
             return items;
@@ -84,7 +323,7 @@ public class ParserService {
             Object item = parseSelectItem();
             items.add(item);
 
-            if (currentToken.get("value") != ",") {
+            if (!isCurrentValue(",")) {
                 break;
             }
             advance(); // 跳过逗号
@@ -93,11 +332,15 @@ public class ParserService {
         return items;
     }
     private Object parseSelectItem() throws SyntaxException {
-        if (currentToken.get("type") != "identifier") {
+        if (isCurrentAggregateFunction()) {
+            return parseAggregateFunction();
+        }
+
+        if (!"identifier".equals(currentType())) {
             throw new SyntaxException(
-                    String.format("Expected identifier, got %s", currentToken.get("type")),
-                    (int)currentToken.get("line"),
-                    (int)currentToken.get("startColumn")
+                    String.format("Expected identifier, got %s", currentType()),
+                    tokenLine(currentToken),
+                    tokenColumn(currentToken)
             );
         }
 
@@ -121,12 +364,43 @@ public class ParserService {
 
         return columnName;
     }
-    private String parseTableName() throws SyntaxException {
-        if (currentToken.get("type") != "identifier") {
+
+    private AggregateFunction parseAggregateFunction() throws SyntaxException {
+        String functionType = currentKeyword();
+        advance();
+        expect("(");
+
+        String identifier;
+        if (isCurrentValue("*")) {
+            identifier = currentValue();
+            advance();
+        } else if ("identifier".equals(currentType())) {
+            identifier = currentValue();
+            advance();
+        } else {
             throw new SyntaxException(
-                    String.format("Expected identifier, got %s", currentToken.get("type")),
-                    (int)currentToken.get("line"),
-                    (int)currentToken.get("startColumn")
+                    String.format("Expected identifier in %s, got %s",
+                            functionType, currentType()),
+                    tokenLine(currentToken),
+                    tokenColumn(currentToken)
+            );
+        }
+
+        expect(")");
+        return new AggregateFunction(functionType, identifier);
+    }
+
+    private boolean isCurrentAggregateFunction() {
+        return "keyword".equals(currentType())
+                && AGGREGATE_FUNCTIONS.contains(currentKeyword());
+    }
+
+    private String parseTableName() throws SyntaxException {
+        if (!"identifier".equals(currentType())) {
+            throw new SyntaxException(
+                    String.format("Expected identifier, got %s", currentType()),
+                    tokenLine(currentToken),
+                    tokenColumn(currentToken)
             );
         }
 
@@ -151,19 +425,122 @@ public class ParserService {
     }
     private String parseWhereClause() throws SyntaxException {
         expect("WHERE");
-
-        // 简化实现：收集直到遇到EOF或下一个语句关键字
-        StringBuilder condition = new StringBuilder();
-        while (!currentToken.get("value").equals(";") &&
-                !currentToken.get("value").equals("SELECT") &&
-                !currentToken.get("value").equals("INSERT") &&
-                !currentToken.get("value").equals("UPDATE") &&
-                !currentToken.get("value").equals("DELETE")){
-            condition.append(currentToken.get("value")).append(" ");
-            advance();
+        if (currentToken == null || isCurrentValue(";")) {
+            throw new SyntaxException(
+                    "Expected condition after WHERE",
+                    tokenLine(currentToken),
+                    tokenColumn(currentToken)
+            );
         }
 
-        return condition.toString().trim();
+        List<String> values = new ArrayList<>();
+        while (currentToken != null
+                && !isCurrentValue(";")
+                && !isCurrentKeyword("GROUP")
+                && !isCurrentKeyword("ORDER")) {
+            values.add(currentValue());
+            advance();
+        }
+        return renderWhereClause(values);
+    }
+
+    private String parseGroupByClause() throws SyntaxException {
+        expect("GROUP");
+        expect("BY");
+
+        List<String> groupItems = new ArrayList<>();
+        while (true) {
+            if (!"identifier".equals(currentType())) {
+                throw new SyntaxException(
+                        String.format("Expected group column, got %s", currentType()),
+                        tokenLine(currentToken),
+                        tokenColumn(currentToken)
+                );
+            }
+
+            groupItems.add(currentValue());
+            advance();
+
+            if (isCurrentValue(",")) {
+                advance();
+                if (currentToken == null
+                        || isCurrentValue(";")
+                        || isCurrentKeyword("ORDER")) {
+                    throw new SyntaxException(
+                            "Expected group column after comma",
+                            tokenLine(currentToken),
+                            tokenColumn(currentToken)
+                    );
+                }
+                continue;
+            }
+
+            if (currentToken != null
+                    && !isCurrentValue(";")
+                    && !isCurrentKeyword("ORDER")) {
+                throw new SyntaxException(
+                        String.format(
+                                "Expected ',' or end of statement after GROUP BY item, got %s",
+                                currentValue()),
+                        tokenLine(currentToken),
+                        tokenColumn(currentToken)
+                );
+            }
+            return String.join(", ", groupItems);
+        }
+    }
+
+    private String parseOrderByClause() throws SyntaxException {
+        expect("ORDER");
+        expect("BY");
+
+        List<String> sortItems = new ArrayList<>();
+        while (true) {
+            if (!"identifier".equals(currentType())) {
+                throw new SyntaxException(
+                        String.format("Expected sort column, got %s", currentType()),
+                        tokenLine(currentToken),
+                        tokenColumn(currentToken)
+                );
+            }
+
+            StringBuilder sortItem = new StringBuilder(currentValue());
+            advance();
+            if (isCurrentKeyword("ASC") || isCurrentKeyword("DESC")) {
+                sortItem.append(" ").append(currentValue());
+                advance();
+            }
+            sortItems.add(sortItem.toString());
+
+            if (isCurrentValue(",")) {
+                advance();
+                if (currentToken == null || isCurrentValue(";")) {
+                    throw new SyntaxException(
+                            "Expected sort column after comma",
+                            tokenLine(currentToken),
+                            tokenColumn(currentToken)
+                    );
+                }
+                continue;
+            }
+
+            if (currentToken != null && !isCurrentValue(";")) {
+                throw new SyntaxException(
+                        String.format("Expected ',' or end of statement after ORDER BY item, got %s",
+                                currentValue()),
+                        tokenLine(currentToken),
+                        tokenColumn(currentToken)
+                );
+            }
+            return String.join(", ", sortItems);
+        }
+    }
+
+    private String renderWhereClause(List<String> values) {
+        return String.join(" ", values)
+                .replace("( ", "(")
+                .replace(" )", ")")
+                .replaceAll("([+-])\\s+(\\d)", "$1$2");
     }
 
     public InsertStatement parseInsert() throws SyntaxException{
@@ -171,7 +548,7 @@ public class ParserService {
         expect("INTO");
         String tableName = parseTableName();
         List<String> columns = new ArrayList<>();
-        if (currentToken.get("value").equals("(")) {
+        if (isCurrentValue("(")) {
             columns = parseColumnList();
         }
         expect("VALUES");
@@ -184,7 +561,7 @@ public class ParserService {
         expect("SET");
         List<Assignment> assignments = parseAssignmentList();
         String whereClause = null;
-        if (currentToken.get("value").equals("WHERE")) {
+        if (isCurrentKeyword("WHERE")) {
             whereClause = parseWhereClause();
         }
         return new UpdateStatement(tableName, assignments, whereClause);
@@ -194,7 +571,7 @@ public class ParserService {
         expect("FROM");
         String tableName = parseTableName();
         String whereClause = null;
-        if (currentToken.get("value").equals("WHERE")) {
+        if (isCurrentKeyword("WHERE")) {
             whereClause = parseWhereClause();
         }
         return new DeleteStatement(tableName, whereClause);
@@ -204,18 +581,18 @@ public class ParserService {
         List<String> columns = new ArrayList<>();
 
         while (true) {
-            if (currentToken.get("type") != "identifier") {
+            if (!"identifier".equals(currentType())) {
                 throw new SyntaxException(
-                        String.format("Expected identifier, got %s", currentToken.get("type")),
-                        (int)currentToken.get("line"),
-                        (int)currentToken.get("startColumn")
+                        String.format("Expected identifier, got %s", currentType()),
+                        tokenLine(currentToken),
+                        tokenColumn(currentToken)
                 );
             }
 
             columns.add((String) currentToken.get("value"));
             advance();
 
-            if (currentToken.get("value").equals(")")) {
+            if (isCurrentValue(")")) {
                 break;
             }
             expect(",");
@@ -229,19 +606,18 @@ public class ParserService {
         List<String> values = new ArrayList<>();
 
         while (true) {
-            if (currentToken.get("type") != "identifier" &&
-                    currentToken.get("type") != "number") {
+            if (!isLiteralToken(currentToken)) {
                 throw new SyntaxException(
-                        String.format("Expected literal, got %s", currentToken.get("type")),
-                        (int)currentToken.get("line"),
-                        (int)currentToken.get("startColumn")
+                        String.format("Expected literal, got %s", currentType()),
+                        tokenLine(currentToken),
+                        tokenColumn(currentToken)
                 );
             }
 
             values.add((String) currentToken.get("value"));
             advance();
 
-            if (currentToken.get("value").equals(")")) {
+            if (isCurrentValue(")")) {
                 break;
             }
             expect(",");
@@ -254,11 +630,11 @@ public class ParserService {
         List<Assignment> assignments = new ArrayList<>();
 
         while (true) {
-            if (currentToken.get("type") != "identifier") {
+            if (!"identifier".equals(currentType())) {
                 throw new SyntaxException(
-                        String.format("Expected identifier, got %s", currentToken.get("type")),
-                        (int)currentToken.get("line"),
-                        (int)currentToken.get("startColumn")
+                        String.format("Expected identifier, got %s", currentType()),
+                        tokenLine(currentToken),
+                        tokenColumn(currentToken)
                 );
             }
 
@@ -266,12 +642,11 @@ public class ParserService {
             advance();
             expect("=");
 
-            if (currentToken.get("type") != "identifier" &&
-                    currentToken.get("type") != "number") {
+            if (!isLiteralToken(currentToken)) {
                 throw new SyntaxException(
-                        String.format("Expected literal, got %s", currentToken.get("type")),
-                        (int)currentToken.get("line"),
-                        (int)currentToken.get("startColumn")
+                        String.format("Expected literal, got %s", currentType()),
+                        tokenLine(currentToken),
+                        tokenColumn(currentToken)
                 );
             }
 
@@ -279,7 +654,7 @@ public class ParserService {
             advance();
             assignments.add(new Assignment(columnName, value));
 
-            if (!currentToken.get("value").equals(",")) {
+            if (!isCurrentValue(",")) {
                 break;
             }
             advance();
@@ -287,4 +662,5 @@ public class ParserService {
 
         return assignments;
     }
+
 }
