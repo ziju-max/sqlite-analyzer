@@ -137,7 +137,8 @@ public class SemanticService {
 
         checkWhereClause(statement.getTableName(), statement.getWhereClause().orElse(null), columns);
         checkGroupByClause(statement.getTableName(),
-                statement.getGroupByClause().orElse(null), columns);
+                statement.getGroupByClause().orElse(null), columns,statement.getSelectList());
+
     }
 
     private void analyzeInsert(InsertStatement statement) throws SemanticException {
@@ -227,16 +228,44 @@ public class SemanticService {
             throw new SemanticException("Column name must not be blank");
         }
 
-        if (columns != null && !columns.contains(normalize(columnName))) {
+        String actualColumnName = resolveColumnName(tableName, columnName);
+        if (columns != null && !columns.contains(normalize(actualColumnName))) {
             throw new SemanticException(
                     String.format("Column '%s' does not exist in table '%s'", columnName, tableName)
             );
         }
     }
 
+    private String resolveColumnName(String tableName, String columnReference)
+            throws SemanticException {
+        String reference = columnReference.trim();
+        int separator = reference.indexOf('.');
+        if (separator < 0) {
+            return reference;
+        }
+
+        if (separator == 0
+                || separator == reference.length() - 1
+                || separator != reference.lastIndexOf('.')) {
+            throw new SemanticException(
+                    String.format("Invalid qualified column name '%s'", columnReference)
+            );
+        }
+
+        String qualifier = reference.substring(0, separator);
+        if (!normalize(qualifier).equals(normalize(tableName))) {
+            throw new SemanticException(
+                    String.format("Column '%s' does not belong to table '%s'",
+                            columnReference, tableName)
+            );
+        }
+
+        return reference.substring(separator + 1);
+    }
+
     private void checkWhereClause(String tableName, String whereClause, Set<String> columns)
             throws SemanticException {
-        if (whereClause == null || whereClause.isBlank() || columns == null) {
+        if (whereClause == null || whereClause.isBlank()) {
             return;
         }
 
@@ -253,9 +282,18 @@ public class SemanticService {
                     continue;
                 }
 
+                if (isQualifiedIdentifier(tokens, i)) {
+                    String qualifiedColumn = value + "."
+                            + tokens.get(i + 2).get("value");
+                    checkColumn(tableName, qualifiedColumn, columns);
+                    i += 2;
+                    continue;
+                }
+
                 Map<String, Object> previousToken = i == 0 ? null : tokens.get(i - 1);
-                if (isConditionStart(previousToken)
-                        || columns.contains(normalize(value))) {
+                if (columns != null
+                        && (isConditionStart(previousToken)
+                        || columns.contains(normalize(value)))) {
                     checkColumn(tableName, value, columns);
                 }
             }
@@ -267,7 +305,12 @@ public class SemanticService {
         }
     }
 
-    private void checkGroupByClause(String tableName, String groupByClause, Set<String> columns)
+    private void checkGroupByClause(
+            String tableName,
+            String groupByClause,
+            Set<String> columns,
+            List<Object> selectList
+    )
             throws SemanticException {
         if (groupByClause == null || groupByClause.isBlank() || columns == null) {
             return;
@@ -276,6 +319,32 @@ public class SemanticService {
         for (String groupColumn : groupByClause.split(",")) {
             checkColumn(tableName, groupColumn.trim(), columns);
         }
+        List<String> groupColumns = new ArrayList<>();
+        for (String groupColumn : groupByClause.split(",")) {
+            groupColumns.add(normalize(resolveColumnName(tableName, groupColumn.trim())));
+        }
+        for (Object item : selectList) {
+            if (item instanceof String selectName && !"*".equals(selectName)) {
+                String normalizedSelectName =
+                        normalize(resolveColumnName(tableName, selectName));
+                if (!groupColumns.contains(normalizedSelectName)) {
+                    throw new SemanticException(
+                            String.format("SELECT item %s is not in GROUP BY Clause", selectName)
+                    );
+                }
+            }
+        }
+    }
+
+    private boolean isQualifiedIdentifier(List<Map<String, Object>> tokens, int index) {
+        if (index + 2 >= tokens.size()) {
+            return false;
+        }
+
+        Map<String, Object> separator = tokens.get(index + 1);
+        Map<String, Object> column = tokens.get(index + 2);
+        return ".".equals(separator.get("value"))
+                && "identifier".equals(column.get("type"));
     }
 
     private boolean isConditionStart(Map<String, Object> previousToken) {

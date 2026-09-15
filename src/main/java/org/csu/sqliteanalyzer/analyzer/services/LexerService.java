@@ -19,7 +19,7 @@ public class LexerService {
             "ORDER", "BY", "ASC", "DESC", "GROUP",
             "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS", "ON",
             "COUNT", "SUM", "AVG", "MAX", "MIN",
-            "PRIMARY", "KEY", "AUTOINCREMENT", "NULL", "DEFAULT"
+            "PRIMARY", "KEY", "AUTO_INCREMENT", "NULL", "DEFAULT"
     );
     private static final Set<String> DATA_TYPES = Set.of(
             "INT", "INTEGER", "TINYINT", "SMALLINT", "MEDIUMINT", "BIGINT",

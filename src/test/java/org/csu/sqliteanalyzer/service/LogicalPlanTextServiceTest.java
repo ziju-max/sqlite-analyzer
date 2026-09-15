@@ -93,7 +93,7 @@ public class LogicalPlanTextServiceTest {
     @Test
     public void testGenerateReturnsSameStructuredPlan() throws Exception {
         //TreeRoot treeRoot = generate("SELECT username FROM user WHERE user_id = 1;");
-        TreeRoot treeRoot = generate("Update user set username='ziju' where id = 1 and age>18;");
+        TreeRoot treeRoot = generate("select id from student join s on student.username=s.s_name;");
         System.out.println(logicalPlanTextService.toText(treeRoot));
         System.out.println(treeRoot.toString());
 

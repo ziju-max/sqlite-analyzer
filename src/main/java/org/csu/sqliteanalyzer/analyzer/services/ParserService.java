@@ -16,7 +16,7 @@ import java.util.*;
 public class ParserService {
     private static final Set<String> COLUMN_CONSTRAINTS = Set.of(
             "PRIMARY KEY",
-            "AUTOINCREMENT",
+            "AUTO_INCREMENT",
             "NOT NULL",
             "DEFAULT"
     );
@@ -280,7 +280,7 @@ public class ParserService {
         String keyword = currentKeyword();
         String constraint = switch (keyword) {
             case "PRIMARY" -> "PRIMARY KEY";
-            case "AUTOINCREMENT" -> "AUTOINCREMENT";
+            case "AUTO_INCREMENT" -> "AUTO_INCREMENT";
             case "NOT" -> "NOT NULL";
             case "DEFAULT" -> "DEFAULT";
             default -> null;
@@ -297,7 +297,7 @@ public class ParserService {
                 advance();
                 consumeConstraintKeyword("KEY");
                 return new PrimaryKeyConstraint();
-            case "AUTOINCREMENT":
+            case "AUTO_INCREMENT":
                 advance();
                 return new AutoIncrementConstraint();
             case "NOT NULL":
@@ -451,15 +451,7 @@ public class ParserService {
             return parseAggregateFunction();
         }
 
-        if (!"identifier".equals(currentType())) {
-            throw new SyntaxException(
-                    String.format("Expected identifier, got %s", currentType()),
-                    tokenLine(currentToken),
-                    tokenColumn(currentToken)
-            );
-        }
-
-        String columnName = parseQualifiedIdentifier("Expected identifier");
+        String columnName = parseQualifiedIdentifier("Expected column name or table.column");
 
 //        // 检查是否有AS别名
 //        if (currentToken.getType() == TokenType.AS) {
@@ -531,7 +523,7 @@ public class ParserService {
 
         StringBuilder identifier = new StringBuilder(currentValue());
         advance();
-        while (isCurrentValue(".")) {
+        if (isCurrentValue(".")) {
             advance();
             if (!"identifier".equals(currentType())) {
                 throw new SyntaxException(
@@ -542,6 +534,13 @@ public class ParserService {
             }
             identifier.append(".").append(currentValue());
             advance();
+        }
+        if ("identifier".equals(currentType())) {
+            throw new SyntaxException(
+                    "Unexpected identifier after column name",
+                    tokenLine(currentToken),
+                    tokenColumn(currentToken)
+            );
         }
         return identifier.toString();
     }
