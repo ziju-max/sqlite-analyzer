@@ -69,6 +69,13 @@ public class LexerService {
                 continue;
             }
 
+            if (current == '#') {
+                int nextPosition = skipLineComment(source, position + 1);
+                location.advance(source, position, nextPosition);
+                position = nextPosition;
+                continue;
+            }
+
             if (current == '/' && position + 1 < source.length()
                     && source.charAt(position + 1) == '*') {
                 int nextPosition = skipBlockComment(
@@ -214,6 +221,10 @@ public class LexerService {
     ) {
         position++;
         while (position < source.length()) {
+            if (source.charAt(position) == '\\') {
+                position += 2;
+                continue;
+            }
             if (source.charAt(position) == closing) {
                 if (position + 1 < source.length() && source.charAt(position + 1) == closing) {
                     position += 2;
@@ -330,7 +341,7 @@ public class LexerService {
         }
 
         return switch (source.charAt(position)) {
-            case '=', '!', '<', '>', '+', '-', '*', '/'->
+            case '=', '!', '<', '>', '+', '-', '*', '/', '\\' ->
                     String.valueOf(source.charAt(position));
             default -> null;
         };
@@ -383,13 +394,12 @@ public class LexerService {
     }
 
     private static boolean isIdentifierStart(char character) {
-        return Character.isLetter(character) || character == '_' || character == '$';
+        return Character.isLetter(character) || character == '_';
     }
 
     private static boolean isIdentifierPart(char character) {
         return Character.isLetterOrDigit(character)
-                || character == '_'
-                || character == '$';
+                || character == '_';
     }
 
     private static boolean isPunctuation(char character) {

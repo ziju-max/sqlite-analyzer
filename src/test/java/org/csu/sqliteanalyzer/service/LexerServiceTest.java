@@ -136,8 +136,33 @@ public class LexerServiceTest {
     }
 
     @Test
+    public void acceptsConfiguredPunctuationOperatorsAndComments() {
+        List<Map<String, Object>> tokens = lexerService.tokenize(
+                "SELECT `name`, 'can\\'t', \"quoted\", table.column, 1 + 2 - 3 * 4 / 5; # line comment\n"
+                        + "/* block comment */ SELECT name FROM table;"
+        );
+
+        assertEquals(List.of(
+                        "SELECT", "`name`", ",", "'can\\'t'", ",", "\"quoted\"", ",",
+                        "TABLE", ".", "column", ",", "1", "+", "2", "-", "3", "*", "4", "/", "5", ";",
+                        "SELECT", "name", "FROM", "TABLE", ";"
+                ),
+                tokens.stream().map(token -> token.get("value")).toList());
+    }
+
+    @Test
+    public void acceptsBackslashAsAnExplicitOperator() {
+        List<Map<String, Object>> tokens = lexerService.tokenize("\\");
+
+        assertEquals("operator", tokens.get(0).get("type"));
+        assertEquals("\\", tokens.get(0).get("value"));
+    }
+
+    @Test
     public void rejectsUnexpectedCharacters() {
         assertThrows(LexerException.class, () -> lexerService.tokenize("SELECT @name"));
+        assertThrows(LexerException.class, () -> lexerService.tokenize("SELECT $name"));
+        assertThrows(LexerException.class, () -> lexerService.tokenize("SELECT name:name"));
     }
 
     private void assertUnterminatedQuote(String source) {
