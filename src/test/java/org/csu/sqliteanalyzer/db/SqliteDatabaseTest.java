@@ -55,4 +55,18 @@ public class SqliteDatabaseTest {
         assertTrue(result.contains("persist-me"), result);
         db2.shutdown();
     }
+
+    @Test
+    void testSemanticTypeMismatchIsReportedBeforeExecution() {
+        SqliteDatabase db = new SqliteDatabase(DB);
+        db.execute("CREATE TABLE typed_student(age INT, name VARCHAR)");
+
+        String result = db.execute(
+                "SELECT age FROM typed_student WHERE age + 'not-a-number' > 0;"
+        );
+
+        assertTrue(result.contains("语义错误"), result);
+        assertTrue(result.contains("类型不匹配"), result);
+        db.shutdown();
+    }
 }

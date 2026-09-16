@@ -1,7 +1,7 @@
 package org.csu.sqliteanalyzer.analyzer.services;
 
 import org.csu.sqliteanalyzer.analyzer.logical_plan.filter.FilterNode;
-import org.csu.sqliteanalyzer.analyzer.logical_plan.TreeRoot;
+import org.csu.sqliteanalyzer.analyzer.logical_plan.LogicalPlan;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.TreeRootNode;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.filter.BooleanExpression;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.filter.ComparisonExpr;
@@ -13,7 +13,7 @@ import java.util.Objects;
 /**
  * 执行计划树形文本输出服务
  */
-public class TreeTextService {
+public class AstTreeTextService {
 
     /**
      * 将执行计划输出为树形文本。
@@ -21,7 +21,7 @@ public class TreeTextService {
      * @param plan 执行计划
      * @return 树形文本
      */
-    public String toText(TreeRoot plan) {
+    public String toText(LogicalPlan plan) {
         try {
             Objects.requireNonNull(plan, "logical plan must not be null");
             return toText(plan.getRoot());

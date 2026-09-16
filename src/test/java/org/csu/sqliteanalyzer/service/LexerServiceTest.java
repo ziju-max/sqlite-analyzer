@@ -30,8 +30,9 @@ public class LexerServiceTest {
     @Test
     public void recognizesDataTypesSeparatelyFromOperationKeywords() {
         List<Map<String, Object>> tokens = lexerService.tokenize(
-                "cReAtE tAbLe account (id iNt, name vArChAr, enabled BoOlEaN)"
+                "cReAtE tAbLe account (id iNt, name vArChAr, enabled BoOlEaN);"
         );
+        tokens.forEach(System.out::println);
 
         assertEquals("keyword", tokens.get(0).get("type"));
         assertEquals("CREATE", tokens.get(0).get("value"));

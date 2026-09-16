@@ -60,7 +60,11 @@ public class InsertStatement extends ASTNode {
 
     @Override
     public String toString() {
-        return String.format("InsertStatement{tableName='%s', columns=%s, values=%s}",
-                tableName, columns, values);
+        return renderTree(
+                "InsertStatement (INSERT)",
+                treeProperty("tableName", tableName),
+                treeProperty("columns", columns),
+                treeProperty("values", values)
+        );
     }
 }

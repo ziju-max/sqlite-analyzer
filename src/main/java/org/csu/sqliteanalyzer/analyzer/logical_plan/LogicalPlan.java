@@ -4,10 +4,10 @@ package org.csu.sqliteanalyzer.analyzer.logical_plan;
  * SQL执行计划
  * 保存执行计划的根节点并以树形结构输出
  */
-public class TreeRoot {
+public class LogicalPlan {
     private TreeRootNode root;
 
-    public TreeRoot(TreeRootNode root) {
+    public LogicalPlan(TreeRootNode root) {
         this.root = root;
     }
 

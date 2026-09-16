@@ -10,7 +10,7 @@ import org.csu.sqliteanalyzer.analyzer.logical_plan.select.JoinNode;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.select.ProjectNode;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.select.SortNode;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.TableScanNode;
-import org.csu.sqliteanalyzer.analyzer.logical_plan.TreeRoot;
+import org.csu.sqliteanalyzer.analyzer.logical_plan.LogicalPlan;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.TreeRootNode;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.UpdateNode;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.ValuesNode;
@@ -31,17 +31,17 @@ public class LogicalPlanTextService {
     /**
      * 输出结构化执行计划。
      *
-     * @param treeRoot AstTreeService 生成的树
+     * @param logicalPlan AstTreeService 生成的树
      * @return 结构化执行计划文本
      */
-    public String toText(TreeRoot treeRoot) {
+    public String toText(LogicalPlan logicalPlan) {
         try {
-            Objects.requireNonNull(treeRoot, "tree root must not be null");
-            Objects.requireNonNull(treeRoot.getRoot(), "tree root node must not be null");
+            Objects.requireNonNull(logicalPlan, "tree root must not be null");
+            Objects.requireNonNull(logicalPlan.getRoot(), "tree root node must not be null");
 
-            String tableName = findTableName(treeRoot.getRoot());
+            String tableName = findTableName(logicalPlan.getRoot());
             StringBuilder plan = new StringBuilder();
-            appendNode(plan, treeRoot.getRoot(), tableName, 0);
+            appendNode(plan, logicalPlan.getRoot(), tableName, 0);
             return plan.toString();
         } catch (RuntimeException e) {
             throw new IllegalArgumentException(
@@ -50,13 +50,13 @@ public class LogicalPlanTextService {
     }
 
     /**
-     * 输出结构化执行计划。与 {@link #toText(TreeRoot)} 等价。
+     * 输出结构化执行计划。与 {@link #toText(LogicalPlan)} 等价。
      *
-     * @param treeRoot AstTreeService 生成的树
+     * @param logicalPlan AstTreeService 生成的树
      * @return 结构化执行计划文本
      */
-    public String generate(TreeRoot treeRoot) {
-        return toText(treeRoot);
+    public String generate(LogicalPlan logicalPlan) {
+        return toText(logicalPlan);
     }
 
     private void appendNode(

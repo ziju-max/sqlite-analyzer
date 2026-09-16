@@ -1,5 +1,5 @@
 -- 建表
-CREATE TABLE student(id INT, name VARCHAR, age INT);
+CREATE TABLE student(id INT, name VARCHAR(30), age INT);
 -- 插入数据
 INSERT INTO student(id,name,age) VALUES (1,'Alice',20);
 INSERT INTO student(id,name,age) VALUES (2,'Bob',21);

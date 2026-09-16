@@ -27,10 +27,7 @@ public class ParserServiceTest {
     @Test
     public void test1(){
         String source= """
-                create TAble user(
-                    id int primary key not null,
-                    username varchar(30) default 'ziju'
-                );
+                select username from user where age>18 or depth = "fads" and home="CS";
                 """;
 
         lexerService = new LexerService();
@@ -39,9 +36,9 @@ public class ParserServiceTest {
 //        System.out.println(tokens.get(0));
         try {
             ASTNode ast = parserService.parse();
-            if (ast instanceof CreateTableStatement a){
+            if (ast instanceof SelectStatement a){
                 System.out.println(a.toString());
-            }else{
+            } else{
                 System.out.println("error");
             }
         }catch (Exception e){

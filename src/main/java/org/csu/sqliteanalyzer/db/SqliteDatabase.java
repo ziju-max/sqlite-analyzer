@@ -7,7 +7,7 @@ import org.csu.sqliteanalyzer.analyzer.exception.LexerException;
 import org.csu.sqliteanalyzer.analyzer.exception.PlanException;
 import org.csu.sqliteanalyzer.analyzer.exception.SemanticException;
 import org.csu.sqliteanalyzer.analyzer.exception.SyntaxException;
-import org.csu.sqliteanalyzer.analyzer.logical_plan.TreeRoot;
+import org.csu.sqliteanalyzer.analyzer.logical_plan.LogicalPlan;
 import org.csu.sqliteanalyzer.analyzer.services.LexerService;
 import org.csu.sqliteanalyzer.analyzer.services.LogicalPlanService;
 import org.csu.sqliteanalyzer.analyzer.services.LogicalPlanTextService;
@@ -15,18 +15,17 @@ import org.csu.sqliteanalyzer.analyzer.services.ParserService;
 import org.csu.sqliteanalyzer.analyzer.services.SemanticService;
 import org.csu.sqliteanalyzer.engine.catalog.CatalogManager;
 import org.csu.sqliteanalyzer.engine.metadata.Column;
+import org.csu.sqliteanalyzer.engine.metadata.DataType;
 import org.csu.sqliteanalyzer.engine.metadata.TableInfo;
 import org.csu.sqliteanalyzer.engine.storage.StorageEngine;
 import org.csu.sqliteanalyzer.execution.ExecutionEngine;
 import org.csu.sqliteanalyzer.storage.StorageSystem;
 import org.csu.sqliteanalyzer.storage.buffer.BufferPool;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 数据库门面：把「编译器前端 + 存储/引擎 + 执行引擎」串成一条完整流水线。
@@ -66,7 +65,6 @@ public class SqliteDatabase {
             for (Map<String, Object> t : tokens) {
                 out.append(formatToken(t)).append('\n');
             }
-
             // 2. 语法分析
             ASTNode ast = new ParserService(tokens).parse();
             out.append("\n【2. 语法分析 AST】\n").append(ast).append('\n');
@@ -89,7 +87,7 @@ public class SqliteDatabase {
             if (ast instanceof CreateTableStatement c) {
                 out.append("CreateTable(").append(c.getTableName()).append(")\n");
             } else {
-                TreeRoot plan = planService.generate(ast);
+                LogicalPlan plan = planService.generate(ast);
                 out.append(planTextService.toText(plan)).append('\n');
             }
 
@@ -99,11 +97,11 @@ public class SqliteDatabase {
 
             // 建表成功后，把新表同步到编译器的语义目录里，后续语句才能通过语义检查
             if (ast instanceof CreateTableStatement c) {
-                List<String> names = new ArrayList<>();
+                Map<String, DataType> columnTypes = new LinkedHashMap<>();
                 for (ColumnDefinition cd : c.getColumnDefinitions()) {
-                    names.add(cd.getName());
+                    columnTypes.put(cd.getName(), mapType(cd.getDataType().getName()));
                 }
-                semanticService.registerTable(c.getTableName(), names);
+                semanticService.registerTable(c.getTableName(), columnTypes);
             }
 
             return out.toString();
@@ -138,17 +136,23 @@ public class SqliteDatabase {
                 pool.getHitRate() * 100);
     }
 
-    /** 把系统目录里的所有表转成编译器语义目录需要的结构（表名 -> 列名集合）。 */
-    private Map<String, Set<String>> buildSchemaMap() {
-        Map<String, Set<String>> map = new LinkedHashMap<>();
+    /** 把系统目录里的所有表转成编译器语义目录需要的结构（表名 -> 列名/类型）。 */
+    private Map<String, Map<String, DataType>> buildSchemaMap() {
+        Map<String, Map<String, DataType>> map = new LinkedHashMap<>();
         for (TableInfo t : catalog.getAllTables()) {
-            Set<String> cols = new LinkedHashSet<>();
+            Map<String, DataType> columns = new LinkedHashMap<>();
             for (Column c : t.getColumns()) {
-                cols.add(c.getName());
+                columns.put(c.getName(), c.getType());
             }
-            map.put(t.getTableName(), cols);
+            map.put(t.getTableName(), columns);
         }
         return map;
+    }
+
+    private DataType mapType(String name) {
+        return name.toUpperCase(Locale.ROOT).contains("INT")
+                ? DataType.INT
+                : DataType.VARCHAR;
     }
 
     private String formatToken(Map<String, Object> t) {

@@ -19,6 +19,7 @@ import java.util.*;
  */
 public class SemanticService {
     private final Map<String, Set<String>> tables;
+    private final Map<String, Map<String, ValueType>> columnTypes;
     private final LexerService lexerService;
 
     public Map<String, Set<String>> getTables(){
@@ -27,14 +28,15 @@ public class SemanticService {
 
     public SemanticService() {
         this.tables = new LinkedHashMap<>();
+        this.columnTypes = new LinkedHashMap<>();
         this.lexerService = new LexerService();
     }
 
-    public SemanticService(Map<String, ? extends Collection<String>> tables) {
+    public SemanticService(Map<String, ?> tables) {
         this();
         try {
             Objects.requireNonNull(tables, "tables must not be null")
-                    .forEach(this::registerTable);
+                    .forEach(this::registerTableDefinition);
         } catch (RuntimeException e) {
             throw new IllegalArgumentException(
                     "Invalid table definitions: " + exceptionMessage(e), e);
@@ -55,13 +57,98 @@ public class SemanticService {
                 columnNames.add(normalize(column));
             }
 
-            tables.put(normalize(tableName), columnNames);
+            Map<String, ValueType> types = new LinkedHashMap<>();
+            for (String columnName : columnNames) {
+                types.put(columnName, ValueType.UNKNOWN);
+            }
+            registerTableInternal(tableName, columnNames, types);
         } catch (IllegalArgumentException e) {
             throw e;
         } catch (RuntimeException e) {
             throw new IllegalArgumentException(
                     "Invalid table definition: " + exceptionMessage(e), e);
         }
+    }
+
+    /**
+     * 注册带类型的表结构。类型值可以是 INT/VARCHAR 字符串，也可以是项目中的
+     * 存储层 DataType 枚举或 AST DataType 对象。
+     */
+    public void registerTable(String tableName, Map<String, ?> columns) {
+        try {
+            if (tableName == null || tableName.isBlank()) {
+                throw new IllegalArgumentException("table name must not be blank");
+            }
+
+            Map<String, ValueType> types = new LinkedHashMap<>();
+            for (Map.Entry<String, ?> entry :
+                    Objects.requireNonNull(columns, "columns must not be null").entrySet()) {
+                String columnName = entry.getKey();
+                if (columnName == null || columnName.isBlank()) {
+                    throw new IllegalArgumentException("column name must not be blank");
+                }
+                types.put(normalize(columnName), parseType(entry.getValue()));
+            }
+
+            registerTableInternal(tableName, types.keySet(), types);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException(
+                    "Invalid table definition: " + exceptionMessage(e), e);
+        }
+    }
+
+    private void registerTableDefinition(String tableName, Object definition) {
+        if (definition instanceof Map<?, ?> typedColumns) {
+            Map<String, Object> columns = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : typedColumns.entrySet()) {
+                if (!(entry.getKey() instanceof String columnName)) {
+                    throw new IllegalArgumentException("column name must be a string");
+                }
+                columns.put(columnName, entry.getValue());
+            }
+            registerTable(tableName, columns);
+            return;
+        }
+
+        if (definition instanceof Collection<?> columnCollection) {
+            List<String> columns = new ArrayList<>();
+            for (Object column : columnCollection) {
+                if (!(column instanceof String columnName)) {
+                    throw new IllegalArgumentException("column name must be a string");
+                }
+                columns.add(columnName);
+            }
+            registerTable(tableName, columns);
+            return;
+        }
+
+        throw new IllegalArgumentException(
+                "table definition must be a collection of column names or a column type map");
+    }
+
+    private void registerTableInternal(
+            String tableName,
+            Collection<String> columns,
+            Map<String, ValueType> types
+    ) {
+        String normalizedTableName = normalize(tableName);
+        Set<String> columnNames = new LinkedHashSet<>();
+        for (String column : columns) {
+            columnNames.add(normalize(column));
+        }
+
+        Map<String, ValueType> normalizedTypes = new LinkedHashMap<>();
+        for (String column : columnNames) {
+            normalizedTypes.put(
+                    column,
+                    types.getOrDefault(column, ValueType.UNKNOWN)
+            );
+        }
+
+        tables.put(normalizedTableName, columnNames);
+        columnTypes.put(normalizedTableName, normalizedTypes);
     }
 
     public void registerTable(String tableName, String... columns) {
@@ -271,6 +358,7 @@ public class SemanticService {
 
         try {
             List<Map<String, Object>> tokens = lexerService.tokenize(whereClause);
+            checkArithmeticTypes(tableName, tokens, columns);
             for (int i = 0; i < tokens.size(); i++) {
                 Map<String, Object> token = tokens.get(i);
                 if (!"identifier".equals(token.get("type"))) {
@@ -303,6 +391,344 @@ public class SemanticService {
             throw new SemanticException(
                     "Unable to validate WHERE clause: " + exceptionMessage(e), e);
         }
+    }
+
+    /**
+     * 检查 WHERE 中算术运算符两侧的操作数类型。
+     *
+     * <p>WHERE 当前仍以字符串形式保存在 AST 中，故这里直接基于词法 token
+     * 推导算术子表达式类型。这样不会改变现有 AST/执行计划接口，同时能在执行
+     * 计划生成前报告诸如 age + 'abc' 这样的语义错误。</p>
+     */
+    private void checkArithmeticTypes(
+            String tableName,
+            List<Map<String, Object>> tokens,
+            Set<String> columns
+    ) throws SemanticException {
+        for (int i = 0; i < tokens.size(); i++) {
+            if (!isBinaryArithmeticOperator(tokens, i)) {
+                continue;
+            }
+
+            ValueType leftType = typeBeforeArithmeticOperator(
+                    tableName, tokens, columns, i);
+            ValueType rightType = typeAfterArithmeticOperator(
+                    tableName, tokens, columns, i);
+            rejectStringArithmetic(tokens.get(i), leftType, rightType);
+        }
+    }
+
+    private void rejectStringArithmetic(
+            Map<String, Object> operatorToken,
+            ValueType leftType,
+            ValueType rightType
+    ) throws SemanticException {
+        if (leftType == ValueType.UNKNOWN
+                || rightType == ValueType.UNKNOWN
+                || leftType == ValueType.NULL
+                || rightType == ValueType.NULL) {
+            return;
+        }
+        if (leftType != ValueType.STRING && rightType != ValueType.STRING) {
+            return;
+        }
+
+        throw new SemanticException(
+                String.format(
+                        "类型不匹配：算术运算符 '%s' 不能作用于 %s 和 %s",
+                        operatorToken.get("value"),
+                        displayType(leftType),
+                        displayType(rightType)
+                )
+        );
+    }
+
+    private ValueType typeBeforeArithmeticOperator(
+            String tableName,
+            List<Map<String, Object>> tokens,
+            Set<String> columns,
+            int operatorIndex
+    ) throws SemanticException {
+        int operandEnd = operatorIndex - 1;
+        if (operandEnd < 0) {
+            return ValueType.UNKNOWN;
+        }
+
+        if (")".equals(tokens.get(operandEnd).get("value"))) {
+            int openingIndex = findOpeningParenthesis(tokens, operandEnd);
+            return openingIndex < 0
+                    ? ValueType.UNKNOWN
+                    : inferArithmeticType(
+                    tableName, tokens, columns, openingIndex + 1, operandEnd - 1);
+        }
+
+        int start = qualifiedIdentifierStart(tokens, operandEnd);
+        if (start > 0 && isUnarySign(tokens, start - 1)) {
+            start--;
+        }
+        return inferArithmeticType(tableName, tokens, columns, start, operandEnd);
+    }
+
+    private ValueType typeAfterArithmeticOperator(
+            String tableName,
+            List<Map<String, Object>> tokens,
+            Set<String> columns,
+            int operatorIndex
+    ) throws SemanticException {
+        int operandStart = operatorIndex + 1;
+        if (operandStart >= tokens.size()) {
+            return ValueType.UNKNOWN;
+        }
+
+        if ("(".equals(tokens.get(operandStart).get("value"))) {
+            int closingIndex = findClosingParenthesis(tokens, operandStart);
+            return closingIndex < 0
+                    ? ValueType.UNKNOWN
+                    : inferArithmeticType(
+                    tableName, tokens, columns, operandStart + 1, closingIndex - 1);
+        }
+
+        int end = isUnarySign(tokens, operandStart)
+                ? qualifiedIdentifierEnd(tokens, operandStart + 1)
+                : qualifiedIdentifierEnd(tokens, operandStart);
+        return inferArithmeticType(tableName, tokens, columns, operandStart, end);
+    }
+
+    private ValueType inferArithmeticType(
+            String tableName,
+            List<Map<String, Object>> tokens,
+            Set<String> columns,
+            int start,
+            int end
+    ) throws SemanticException {
+        while (start <= end
+                && "(".equals(tokens.get(start).get("value"))
+                && findClosingParenthesis(tokens, start) == end) {
+            start++;
+            end--;
+        }
+        if (start > end) {
+            return ValueType.UNKNOWN;
+        }
+
+        int depth = 0;
+        for (int i = start; i <= end; i++) {
+            String value = String.valueOf(tokens.get(i).get("value"));
+            if ("(".equals(value)) {
+                depth++;
+            } else if (")".equals(value)) {
+                depth--;
+            } else if (depth == 0 && isBinaryArithmeticOperator(tokens, i)) {
+                ValueType leftType = inferArithmeticType(
+                        tableName, tokens, columns, start, i - 1);
+                ValueType rightType = inferArithmeticType(
+                        tableName, tokens, columns, i + 1, end);
+                rejectStringArithmetic(tokens.get(i), leftType, rightType);
+                return mergeArithmeticTypes(leftType, rightType);
+            }
+        }
+
+        if (isUnarySign(tokens, start)) {
+            return inferArithmeticType(tableName, tokens, columns, start + 1, end);
+        }
+
+        if (start == end) {
+            return typeOfToken(tableName, tokens, columns, start);
+        }
+
+        if (end - start == 2
+                && ".".equals(tokens.get(start + 1).get("value"))) {
+            return typeOfColumn(
+                    tableName,
+                    String.valueOf(tokens.get(start).get("value"))
+                            + "." + tokens.get(end).get("value"),
+                    columns
+            );
+        }
+
+        return ValueType.UNKNOWN;
+    }
+
+    private ValueType mergeArithmeticTypes(ValueType leftType, ValueType rightType) {
+        if (leftType == ValueType.UNKNOWN || rightType == ValueType.UNKNOWN) {
+            return ValueType.UNKNOWN;
+        }
+        if (leftType == ValueType.NULL || rightType == ValueType.NULL) {
+            return ValueType.UNKNOWN;
+        }
+        if (leftType == ValueType.STRING || rightType == ValueType.STRING) {
+            return ValueType.STRING;
+        }
+        if (leftType == ValueType.INT || rightType == ValueType.INT) {
+            return ValueType.INT;
+        }
+        return ValueType.UNKNOWN;
+    }
+
+    private ValueType typeOfToken(
+            String tableName,
+            List<Map<String, Object>> tokens,
+            Set<String> columns,
+            int index
+    ) throws SemanticException {
+        Map<String, Object> token = tokens.get(index);
+        String tokenType = String.valueOf(token.get("type"));
+        String value = String.valueOf(token.get("value"));
+
+        if ("number".equals(tokenType)) {
+            return ValueType.INT;
+        }
+        if ("string".equals(tokenType) || isQuotedString(value)) {
+            return ValueType.STRING;
+        }
+        if ("keyword".equals(tokenType) && "NULL".equalsIgnoreCase(value)) {
+            return ValueType.NULL;
+        }
+        if ("identifier".equals(tokenType)) {
+            return typeOfColumn(tableName, value, columns);
+        }
+        return ValueType.UNKNOWN;
+    }
+
+    private ValueType typeOfColumn(
+            String tableName,
+            String columnReference,
+            Set<String> columns
+    ) throws SemanticException {
+        if (columns == null) {
+            return ValueType.UNKNOWN;
+        }
+
+        String columnName = resolveColumnName(tableName, columnReference);
+        if (!columns.contains(normalize(columnName))) {
+            return ValueType.UNKNOWN;
+        }
+
+        Map<String, ValueType> types = columnTypes.get(normalize(tableName));
+        return types == null
+                ? ValueType.UNKNOWN
+                : types.getOrDefault(normalize(columnName), ValueType.UNKNOWN);
+    }
+
+    private boolean isBinaryArithmeticOperator(
+            List<Map<String, Object>> tokens,
+            int index
+    ) {
+        String value = String.valueOf(tokens.get(index).get("value"));
+        if (!Set.of("+", "-", "*", "/").contains(value)) {
+            return false;
+        }
+        if ("*".equals(value)) {
+            return true;
+        }
+        if (index == 0) {
+            return false;
+        }
+
+        Map<String, Object> previous = tokens.get(index - 1);
+        String previousValue = String.valueOf(previous.get("value"));
+        return !Set.of(
+                "=", "==", "!=", "<", "<=", ">", ">="
+        ).contains(value);
+    }
+
+    private boolean isUnarySign(List<Map<String, Object>> tokens, int index) {
+        if (index < 0 || index >= tokens.size()) {
+            return false;
+        }
+        String value = String.valueOf(tokens.get(index).get("value"));
+        return ("+".equals(value) || "-".equals(value))
+                && !isBinaryArithmeticOperator(tokens, index);
+    }
+
+    private int qualifiedIdentifierStart(List<Map<String, Object>> tokens, int end) {
+        if (end >= 2
+                && ".".equals(tokens.get(end - 1).get("value"))
+                && "identifier".equals(tokens.get(end - 2).get("type"))) {
+            return end - 2;
+        }
+        return end;
+    }
+
+    private int qualifiedIdentifierEnd(List<Map<String, Object>> tokens, int start) {
+        if (start + 2 < tokens.size()
+                && ".".equals(tokens.get(start + 1).get("value"))
+                && "identifier".equals(tokens.get(start + 2).get("type"))) {
+            return start + 2;
+        }
+        return start;
+    }
+
+    private int findClosingParenthesis(List<Map<String, Object>> tokens, int openingIndex) {
+        int depth = 0;
+        for (int i = openingIndex; i < tokens.size(); i++) {
+            String value = String.valueOf(tokens.get(i).get("value"));
+            if ("(".equals(value)) {
+                depth++;
+            } else if (")".equals(value) && --depth == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int findOpeningParenthesis(List<Map<String, Object>> tokens, int closingIndex) {
+        int depth = 0;
+        for (int i = closingIndex; i >= 0; i--) {
+            String value = String.valueOf(tokens.get(i).get("value"));
+            if (")".equals(value)) {
+                depth++;
+            } else if ("(".equals(value) && --depth == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private boolean isQuotedString(String value) {
+        return value.length() >= 2
+                && ((value.startsWith("'") && value.endsWith("'"))
+                || (value.startsWith("\"") && value.endsWith("\"")));
+    }
+
+    private ValueType parseType(Object type) {
+        if (type instanceof ValueType valueType) {
+            return valueType;
+        }
+        if (type instanceof org.csu.sqliteanalyzer.engine.metadata.DataType dataType) {
+            return dataType == org.csu.sqliteanalyzer.engine.metadata.DataType.INT
+                    ? ValueType.INT
+                    : ValueType.STRING;
+        }
+        if (type instanceof org.csu.sqliteanalyzer.analyzer.ast.create.DataType dataType) {
+            return parseTypeName(dataType.getName());
+        }
+        if (type instanceof String typeName) {
+            return parseTypeName(typeName);
+        }
+        throw new IllegalArgumentException(
+                "unsupported column type '" + type + "'");
+    }
+
+    private ValueType parseTypeName(String typeName) {
+        if (typeName == null || typeName.isBlank()) {
+            throw new IllegalArgumentException("column type must not be blank");
+        }
+
+        String upperTypeName = typeName.toUpperCase(Locale.ROOT);
+        if (upperTypeName.contains("INT")) {
+            return ValueType.INT;
+        }
+        return ValueType.STRING;
+    }
+
+    private String displayType(ValueType type) {
+        return switch (type) {
+            case INT -> "INT";
+            case STRING -> "字符串";
+            case NULL -> "NULL";
+            case UNKNOWN -> "未知类型";
+        };
     }
 
     private void checkGroupByClause(
@@ -373,5 +799,12 @@ public class SemanticService {
         return exception.getMessage() == null
                 ? exception.getClass().getSimpleName()
                 : exception.getMessage();
+    }
+
+    private enum ValueType {
+        INT,
+        STRING,
+        NULL,
+        UNKNOWN
     }
 }

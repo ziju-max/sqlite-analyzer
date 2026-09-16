@@ -76,9 +76,11 @@ public class DatabaseCli {
     private static List<String> splitStatements(String content) {
         List<String> result = new ArrayList<>();
         for (String part : content.split(";")) {
-            String stmt = part.trim();
+            StringBuilder stmt = new StringBuilder();
+            stmt.append(part.trim());
             if (!stmt.isEmpty()) {
-                result.add(stmt);
+                stmt.append(";");
+                result.add(stmt.toString());
             }
         }
         return result;

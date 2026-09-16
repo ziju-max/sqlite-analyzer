@@ -116,6 +116,9 @@ public class ParserService {
         expect("FROM");
         String tableName = parseTableName();
         List<JoinClause> joinClauses = parseJoins();
+        if (!";".equals(currentValue())&&!"WHERE".equals(currentValue())&&!"GROUP".equals(currentValue())&&!"ORDER".equals(currentValue())){
+            throw new SyntaxException(String.format("You have an error in your SQL syntax near "),tokenLine(preToken()),tokenColumn(preToken()));
+        }
         String whereClause = null;
         if (isCurrentKeyword("WHERE")) {
             whereClause = parseWhereClause();
@@ -127,6 +130,9 @@ public class ParserService {
         String orderByClause = null;
         if (isCurrentKeyword("ORDER")) {
             orderByClause = parseOrderByClause();
+        }
+        if (!isCurrentValue(";")){
+            System.out.println(currentToken);
         }
         return new SelectStatement(
                 selectList, tableName, joinClauses, whereClause, groupByClause, orderByClause);
@@ -271,6 +277,10 @@ public class ParserService {
         List<Integer> parameters = List.of();
         if (isCurrentValue("(")) {
             parameters = parseTypeParameters();
+        }else {
+            if ("VARCHAR".equals(name)){
+                throw new SyntaxException(String.format("Expected (number) after VARCHAR"),tokenLine(currentToken),tokenColumn(currentToken));
+            }
         }
 
         return new DataType(name, parameters);
@@ -559,10 +569,28 @@ public class ParserService {
                 && !isCurrentValue(";")
                 && !isCurrentKeyword("GROUP")
                 && !isCurrentKeyword("ORDER")) {
-            values.add(currentValue());
-            advance();
+            if (isCurrentKeyword("SELECT")){
+                if (";".equals(preToken().get("value"))){
+                    return renderSqlFragment(values);
+                } else if ("(".equals(preToken().get("value"))) {
+                    values.add(currentValue());
+                    advance();
+                }else {
+                    throw new SyntaxException(String.format("Expected delimiter ';' after "+preToken().get("value")+"."),tokenLine(currentToken),tokenColumn(currentToken));
+                }
+            }else if(isCurrentKeyword("INSERT")||isCurrentKeyword("UPDATE")||isCurrentKeyword("DELETE")||isCurrentKeyword("CREATE")){
+                if (!";".equals(preToken().get("value"))){
+                    throw new SyntaxException("Expected delimiter ';' after "+preToken().get("value"));
+                }
+            }else {
+                values.add(currentValue());
+                advance();
+            }
         }
         return renderSqlFragment(values);
+    }
+    private Map<String,Object> preToken(){
+        return tokens.get(pos-1);
     }
 
     private String parseGroupByClause() throws SyntaxException {

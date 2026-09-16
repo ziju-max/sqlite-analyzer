@@ -29,7 +29,7 @@ import java.util.List;
 public class LogicalPlanService {
     private final LexerService lexerService = new LexerService();
 
-    public TreeRoot generate(ASTNode ast) throws PlanException {
+    public LogicalPlan generate(ASTNode ast) throws PlanException {
         try {
             return generateInternal(ast);
         } catch (PlanException e) {
@@ -40,7 +40,7 @@ public class LogicalPlanService {
         }
     }
 
-    private TreeRoot generateInternal(ASTNode ast) throws PlanException {
+    private LogicalPlan generateInternal(ASTNode ast) throws PlanException {
         if (ast == null) {
             throw new PlanException("AST node must not be null");
         }
@@ -64,7 +64,7 @@ public class LogicalPlanService {
 //        return new LogicalPlan(new CreatePlanNode(statement.getTableName(), statement.getColumns()));
 //    }
 
-    private TreeRoot generateSelectPlan(SelectStatement statement) throws PlanException {
+    private LogicalPlan generateSelectPlan(SelectStatement statement) throws PlanException {
         TreeRootNode child = new TableScanNode(statement.getTableName());
         for (JoinClause joinClause : statement.getJoins()) {
             TreeRootNode rightChild = new TableScanNode(joinClause.getTableName());
@@ -88,26 +88,26 @@ public class LogicalPlanService {
         if (statement.getOrderByClause().isPresent()) {
             child = new SortNode(statement.getOrderByClause().orElseThrow(), child);
         }
-        return new TreeRoot(new ProjectNode(generateColumns(statement.getSelectList()), child));
+        return new LogicalPlan(new ProjectNode(generateColumns(statement.getSelectList()), child));
     }
 
-    private TreeRoot generateInsertPlan(InsertStatement statement) {
+    private LogicalPlan generateInsertPlan(InsertStatement statement) {
         ValuesNode values = new ValuesNode(statement.getValues());
-        return new TreeRoot(new InsertNode(statement.getTableName(),
+        return new LogicalPlan(new InsertNode(statement.getTableName(),
                 statement.getColumns(), values));
     }
 
-    private TreeRoot generateUpdatePlan(UpdateStatement statement) throws PlanException {
+    private LogicalPlan generateUpdatePlan(UpdateStatement statement) throws PlanException {
         TreeRootNode child = generateTableAccessPlan(statement.getTableName(),
                 statement.getWhereClause().orElse(null));
-        return new TreeRoot(new UpdateNode(statement.getTableName(),
+        return new LogicalPlan(new UpdateNode(statement.getTableName(),
                 statement.getAssignments(), child));
     }
 
-    private TreeRoot generateDeletePlan(DeleteStatement statement) throws PlanException {
+    private LogicalPlan generateDeletePlan(DeleteStatement statement) throws PlanException {
         TreeRootNode child = generateTableAccessPlan(statement.getTableName(),
                 statement.getWhereClause().orElse(null));
-        return new TreeRoot(new DeleteNode(statement.getTableName(), child));
+        return new LogicalPlan(new DeleteNode(statement.getTableName(), child));
     }
 
     private TreeRootNode generateTableAccessPlan(String tableName, String whereClause) throws PlanException {

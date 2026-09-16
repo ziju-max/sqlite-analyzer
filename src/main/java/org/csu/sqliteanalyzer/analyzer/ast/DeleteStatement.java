@@ -42,6 +42,10 @@ public class DeleteStatement extends ASTNode {
 
     @Override
     public String toString() {
-        return String.format("DeleteStatement{tableName='%s', whereClause=%s}", tableName, whereClause);
+        return renderTree(
+                "DeleteStatement (DELETE)",
+                treeProperty("tableName", tableName),
+                whereClauseTree(whereClause)
+        );
     }
 }

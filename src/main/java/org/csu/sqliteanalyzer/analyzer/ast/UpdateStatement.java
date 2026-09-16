@@ -55,7 +55,11 @@ public class UpdateStatement extends ASTNode {
 
     @Override
     public String toString() {
-        return String.format("UpdateStatement{tableName='%s', assignments=%s, whereClause=%s}",
-                tableName, assignments, whereClause);
+        return renderTree(
+                "UpdateStatement (UPDATE)",
+                treeProperty("tableName", tableName),
+                treeProperty("assignments", assignments),
+                whereClauseTree(whereClause)
+        );
     }
 }

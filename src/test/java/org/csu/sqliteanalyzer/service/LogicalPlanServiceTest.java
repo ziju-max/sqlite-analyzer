@@ -9,7 +9,7 @@ import org.csu.sqliteanalyzer.analyzer.logical_plan.select.GroupByNode;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.select.ProjectNode;
 import org.csu.sqliteanalyzer.analyzer.logical_plan.select.SortNode;
 import org.csu.sqliteanalyzer.analyzer.services.LogicalPlanService;
-import org.csu.sqliteanalyzer.analyzer.services.TreeTextService;
+import org.csu.sqliteanalyzer.analyzer.services.AstTreeTextService;
 import org.csu.sqliteanalyzer.analyzer.services.LexerService;
 import org.csu.sqliteanalyzer.analyzer.services.ParserService;
 import org.junit.jupiter.api.Test;
@@ -22,14 +22,14 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 public class LogicalPlanServiceTest {
     private final LexerService lexerService = new LexerService();
     private final LogicalPlanService executionPlanService = new LogicalPlanService();
-    private final TreeTextService treeTextService = new TreeTextService();
+    private final AstTreeTextService astTreeTextService = new AstTreeTextService();
 
     @Test
     public void testGenerateSelectPlan() throws Exception {
-        TreeRoot treeRoot = generate("SELECT username FROM user WHERE user_id=1;");
-        System.out.println(treeTextService.toText(treeRoot));
+        LogicalPlan logicalPlan = generate("SELECT username FROM user WHERE user_id=1;");
+        System.out.println(astTreeTextService.toText(logicalPlan));
 
-        ProjectNode project = assertInstanceOf(ProjectNode.class, treeRoot.getRoot());
+        ProjectNode project = assertInstanceOf(ProjectNode.class, logicalPlan.getRoot());
         assertEquals(List.of("username"), project.getColumns());
 
         FilterNode filter = assertInstanceOf(FilterNode.class, project.getChildren().get(0));
@@ -42,7 +42,7 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testGenerateWhereClauseExpressionTree() throws Exception {
-        TreeRoot plan = generate(
+        LogicalPlan plan = generate(
                 "SELECT age FROM user WHERE age > 18 AND name = 'ju' OR user_id = 92;"
         );
 
@@ -74,7 +74,7 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testGenerateSelectPlanWithSortNode() throws Exception {
-        TreeRoot plan = generate(
+        LogicalPlan plan = generate(
                 "SELECT username FROM user WHERE age >= 18 ORDER BY age DESC, username ASC;"
         );
 
@@ -89,10 +89,11 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testGenerateSelectPlanWithAggregateFunctionNode() throws Exception {
-        TreeRoot plan = generate(
+        LogicalPlan plan = generate(
                 "SELECT COUNT(age), SUM(age), AVG(age), MAX(age), MIN(age) " +
                         "FROM user WHERE age >= 18 ORDER BY age DESC;"
         );
+        System.out.println(astTreeTextService.toText(plan));
 
         ProjectNode project = assertInstanceOf(ProjectNode.class, plan.getRoot());
         SortNode sort = assertInstanceOf(SortNode.class, project.getChildren().get(0));
@@ -112,7 +113,7 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testGenerateSelectPlanAutomaticallyOrdersGroupAggregateAndSortNodes() throws Exception {
-        TreeRoot plan = generate(
+        LogicalPlan plan = generate(
                 "SELECT age, COUNT(age) FROM user " +
                         "WHERE age >= 18 GROUP BY age, score ORDER BY age DESC;"
         );
@@ -132,7 +133,7 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testGenerateGroupByPlanWithoutAggregate() throws Exception {
-        TreeRoot plan = generate("SELECT age FROM user GROUP BY age;");
+        LogicalPlan plan = generate("SELECT age FROM user GROUP BY age;");
 
         ProjectNode project = assertInstanceOf(ProjectNode.class, plan.getRoot());
         GroupByNode groupBy = assertInstanceOf(GroupByNode.class, project.getChildren().get(0));
@@ -142,7 +143,7 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testGenerateNotExpressionTree() throws Exception {
-        TreeRoot plan = generate("SELECT age FROM user WHERE NOT age > 18 AND user_id = 92;");
+        LogicalPlan plan = generate("SELECT age FROM user WHERE NOT age > 18 AND user_id = 92;");
 
         ProjectNode project = assertInstanceOf(ProjectNode.class, plan.getRoot());
         FilterNode filter = assertInstanceOf(FilterNode.class, project.getChildren().get(0));
@@ -156,7 +157,7 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testGenerateParenthesizedWhereExpressionTree() throws Exception {
-        TreeRoot plan = generate(
+        LogicalPlan plan = generate(
                 "SELECT id FROM user WHERE (id > 10 OR age < 18) AND grade >= 90;"
         );
 
@@ -193,20 +194,20 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testOutputPlanAsTreeText() throws Exception {
-        TreeRoot plan = generate("SELECT username FROM user WHERE (user_id>1 or grade >=3 and score>=90) and age>18;");
+        LogicalPlan plan = generate("SELECT username FROM user WHERE (user_id>1 or grade >=3 and score>=90) and age>18;");
 
 //        assertEquals("""
 //                Project(columns=[username])
 //                  Filter(condition=user_id = 1)
 //                    TableScan(table=user)""",
 //                logicalPlanTextService.toText(plan));
-        System.out.println(treeTextService.toText(plan));
+        System.out.println(astTreeTextService.toText(plan));
     }
 
     @Test
     public void testGenerateInsertPlan() throws Exception {
-        TreeRoot plan = generate("INSERT INTO user(user_id,username) VALUES (1,admin);");
-        System.out.println(treeTextService.toText(plan));
+        LogicalPlan plan = generate("INSERT INTO user(user_id,username) VALUES (1,admin);");
+        System.out.println(astTreeTextService.toText(plan));
 
         InsertNode insert = assertInstanceOf(InsertNode.class, plan.getRoot());
         assertEquals("user", insert.getTableName());
@@ -218,8 +219,8 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testGenerateUpdatePlan() throws Exception {
-        TreeRoot plan = generate("UPDATE user SET username=admin WHERE user_id=1 or age>18;");
-        System.out.println(treeTextService.toText(plan));
+        LogicalPlan plan = generate("UPDATE user SET username=admin WHERE user_id=1 or age>18;");
+        System.out.println(astTreeTextService.toText(plan));
 
         UpdateNode update = assertInstanceOf(UpdateNode.class, plan.getRoot());
         assertEquals("user", update.getTableName());
@@ -229,15 +230,15 @@ public class LogicalPlanServiceTest {
 
     @Test
     public void testGenerateDeletePlan() throws Exception {
-        TreeRoot plan = generate("DELETE FROM user WHERE user_id=1;");
-        System.out.println(treeTextService.toText(plan));
+        LogicalPlan plan = generate("DELETE FROM user WHERE user_id=1;");
+        System.out.println(astTreeTextService.toText(plan));
 
         DeleteNode delete = assertInstanceOf(DeleteNode.class, plan.getRoot());
         assertEquals("user", delete.getTableName());
         assertInstanceOf(FilterNode.class, delete.getChildren().get(0));
     }
 
-    private TreeRoot generate(String source) throws Exception {
+    private LogicalPlan generate(String source) throws Exception {
         ParserService parserService = new ParserService(lexerService.tokenize(source));
         ASTNode ast = parserService.parse();
         return executionPlanService.generate(ast);

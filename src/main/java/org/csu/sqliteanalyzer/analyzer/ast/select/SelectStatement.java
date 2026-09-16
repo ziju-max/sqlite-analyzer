@@ -137,9 +137,14 @@ public class SelectStatement extends ASTNode {
 
     @Override
     public String toString() {
-        return String.format(
-                "SelectStatement{selectList=%s, tableName='%s', joins=%s, whereClause=%s, " +
-                        "groupByClause=%s, orderByClause=%s}",
-                selectList, tableName, joinClauses, whereClause, groupByClause, orderByClause);
+        return renderTree(
+                "SelectStatement (SELECT)",
+                treeProperty("selectList", selectList),
+                treeProperty("tableName", tableName),
+                treeProperty("joins", joinClauses),
+                whereClauseTree(whereClause),
+                treeProperty("groupByClause", groupByClause),
+                treeProperty("orderByClause", orderByClause)
+        );
     }
 }

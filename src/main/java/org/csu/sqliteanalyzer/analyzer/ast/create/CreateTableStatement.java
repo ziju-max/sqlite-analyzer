@@ -53,6 +53,13 @@ public class CreateTableStatement extends ASTNode {
 
     @Override
     public String toString() {
+        if (columnDefinitions.isEmpty()) {
+            return renderTree(
+                    "CreateTableStatement (CREATE TABLE)",
+                    treeProperty("tableName", tableName)
+            );
+        }
+
         StringBuilder tree = new StringBuilder("CreateTableStatement (CREATE TABLE)\n");
         tree.append("├── tableName: ").append(tableName).append("\n");
         tree.append("└── columns");
